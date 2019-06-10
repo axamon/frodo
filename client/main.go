@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"time"
+
 	"github.com/axamon/frodo/hasher"
 )
 
@@ -45,6 +46,7 @@ var file = flag.String("file", "", "no default")
 type info struct {
 	Name string `json:"name"`
 	Data string `json:"data"`
+	Hash string `json:"hash"`
 }
 
 func main() {
@@ -68,7 +70,6 @@ func main() {
 		return
 	}
 
-
 	err = upload(ctx, remoteURL, filedainviare, timeout)
 	if err != nil {
 		log.Println(err.Error())
@@ -81,16 +82,11 @@ func upload(ctx context.Context, url, filedainviare string, timeout time.Duratio
 	ctx, cancelUpload := context.WithTimeout(ctx, timeout)
 	defer cancelUpload()
 
-	hash := hasher.Sum(filedainviare)
-	ctx.Value(hash)
-	
 	select {
 	case <-ctx.Done():
 		fmt.Println(ctx.Err()) // prints "context deadline exceeded"
 		return
 	default:
-
-		time.Sleep(1 * time.Microsecond)
 		// Apre file da inviare.
 		file, err := os.Open(filedainviare)
 		if err != nil {
@@ -110,8 +106,13 @@ func upload(ctx context.Context, url, filedainviare string, timeout time.Duratio
 			log.Println(err.Error())
 		}
 
+		// Calcola hash del file.
+		hash := hasher.Sum(filedainviare)
+
+		log.Println(hash) // debug
+
 		// Effettua il marshalling in json dai dati secondo il type info.
-		kvPairs, err := json.Marshal(info{Name: filedainviare, Data: encoded})
+		kvPairs, err := json.Marshal(info{Name: filedainviare, Data: encoded, Hash: hash})
 
 		// fmt.Printf("Sending JSON string '%s'\n", string(kvPairs)) // debug
 
@@ -147,12 +148,11 @@ func upload(ctx context.Context, url, filedainviare string, timeout time.Duratio
 		//fmt.Println("Response: ", string(body))
 
 		switch {
-		case resp.StatusCode <=299:
+		case resp.StatusCode <= 299:
 			return fmt.Errorf("Ok")
-		case resp.StatusCode >299:
+		case resp.StatusCode > 299:
 			return fmt.Errorf("KO")
 		}
-
 
 	}
 	return nil

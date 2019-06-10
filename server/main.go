@@ -32,6 +32,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/axamon/frodo/hasher"
 )
 
 //const userPass = "pippo:pippo"
@@ -47,6 +49,7 @@ var port = flag.String("port", ":8080", "default :8080")
 type info struct {
 	Name string `json:"name"`
 	Data string `json:"data"`
+	Hash string `json:"hash"`
 }
 
 var userPass string
@@ -112,9 +115,14 @@ func main() {
 			log.Fatal("Deconing error", err, err.Error())
 		}
 
+		fmt.Println(element)
+
 		filename := element.Name
 
 		encoded := element.Data
+
+		hashreceived := element.Hash
+
 		decoded, err := base64.StdEncoding.DecodeString(encoded)
 		if err != nil {
 			log.Println(err.Error())
@@ -130,6 +138,23 @@ func main() {
 		n, err := f.Write(decoded)
 		if err != nil {
 			log.Println(err.Error())
+		}
+
+		f.Close()
+
+		log.Println(hashreceived) // debug
+
+		hash := hasher.Sum(filename)
+
+		log.Println(hash) // debug
+
+
+		if hashreceived != hash {
+			log.Printf("Errore nel trasferimento di: %s, hash non corrispondono.\n", filename)
+		}
+
+		if hashreceived == hash {
+			log.Printf("Bella prova zi! %s trasferito bene. Gli hash coincidono.\n", filename)
 		}
 
 		log.Printf("Salvato file %s, scritti: %d bytes", filename, n)
