@@ -1,1 +1,3 @@
 *.exe
+client/payload.txt
+server/payload.txt

@@ -29,13 +29,17 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"time"
+	"github.com/axamon/frodo/hasher"
 )
 
+var timout = flag.Int64("timeout", 3, "tempo massimo per effettuare upload di un file")
 var userid = flag.String("user", "pippo", "username")
 var password = flag.String("pass", "pippo", "password")
-var remoteAddr = flag.String("r", "http://127.0.0.1:8080", "default http://127.0.0.1:8080")
+var remoteAddr = flag.String("r", "127.0.0.1:8080", "default 127.0.0.1:8080")
 var file = flag.String("file", "", "no default")
 
 type info struct {
@@ -51,59 +55,106 @@ func main() {
 	ctx := context.Background()
 
 	var remoteURL string
-	fmt.Println(*remoteAddr)
-	remoteURL = *remoteAddr + "/upload"
+	// fmt.Println(*remoteAddr) // debug
+	remoteURL = "http://" + *remoteAddr + "/upload"
 
 	filedainviare := *file
+	timeout := time.Duration(*timout) * time.Microsecond
 
-	err := upload(ctx, remoteURL, filedainviare)
+	// Verifica che il server sia raggiungibile
+	_, err := net.DialTimeout("tcp", *remoteAddr, time.Duration(1*time.Second))
+	if err != nil {
+		log.Println("Server remoto non raggiungibile, error: ", err)
+		return
+	}
+
+
+	err = upload(ctx, remoteURL, filedainviare, timeout)
 	if err != nil {
 		log.Println(err.Error())
 	}
 }
 
-func upload(ctx context.Context, url string, filedainviare string) (err error) {
-	file, err := os.Open(filedainviare)
-	if err != nil {
-		log.Printf("impossible aprire file: %s errore: %s\n", filedainviare, err.Error())
+func upload(ctx context.Context, url, filedainviare string, timeout time.Duration) (err error) {
+
+	// ! timeout Massimo tempo per terminare upload di un file
+	ctx, cancelUpload := context.WithTimeout(ctx, timeout)
+	defer cancelUpload()
+
+	hash := hasher.Sum(filedainviare)
+	ctx.Value(hash)
+	
+	select {
+	case <-ctx.Done():
+		fmt.Println(ctx.Err()) // prints "context deadline exceeded"
+		return
+	default:
+
+		time.Sleep(1 * time.Microsecond)
+		// Apre file da inviare.
+		file, err := os.Open(filedainviare)
+		if err != nil {
+			log.Printf("impossible aprire file: %s errore: %s\n", filedainviare, err.Error())
+		}
+		defer file.Close()
+
+		// Legge il file in memoria.
+		data, err := ioutil.ReadAll(file)
+		if err != nil {
+			log.Println(err.Error())
+		}
+
+		// Encoda il file in base64.
+		encoded := base64.StdEncoding.EncodeToString(data)
+		if err != nil {
+			log.Println(err.Error())
+		}
+
+		// Effettua il marshalling in json dai dati secondo il type info.
+		kvPairs, err := json.Marshal(info{Name: filedainviare, Data: encoded})
+
+		// fmt.Printf("Sending JSON string '%s'\n", string(kvPairs)) // debug
+
+		// Crea la web request in POST aggiungendo il file encodato.
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(kvPairs))
+		if err != nil {
+			log.Printf(err.Error())
+		}
+
+		// Aggiunge il contesto alla richiesta.
+		req.WithContext(ctx)
+
+		// Aggiunge header per processare json.
+		req.Header.Set("Content-Type", "application/json")
+
+		// Aggiunge sicurezza
+		req.SetBasicAuth(*userid, *password)
+
+		// Crea client http
+		client := &http.Client{}
+
+		// Invia la web request.
+		resp, err := client.Do(req)
+		if err != nil {
+			log.Println(err.Error(), req.Context().Value("NomeFile"))
+			return err
+		}
+
+		// Chiude il body della web response come da specifica.
+		//defer resp.Body.Close()
+
+		//body, err := ioutil.ReadAll(resp.Body)
+		//fmt.Println("Response: ", string(body))
+
+		switch {
+		case resp.StatusCode <=299:
+			return fmt.Errorf("Ok")
+		case resp.StatusCode >299:
+			return fmt.Errorf("KO")
+		}
+
+
 	}
+	return nil
 
-	defer file.Close()
-
-	data, err := ioutil.ReadAll(file)
-	if err != nil {
-		log.Println(err.Error())
-	}
-	encoded := base64.StdEncoding.EncodeToString(data)
-	if err != nil {
-		log.Println(err.Error())
-	}
-
-	kvPairs, err := json.Marshal(info{Name: filedainviare, Data: encoded})
-
-	//fmt.Printf("Sending JSON string '%s'\n", string(kvPairs))
-
-	// Send request to OP's web server
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(kvPairs))
-	if err != nil {
-		log.Printf(err.Error())
-	}
-
-	req.WithContext(ctx)
-
-	req.Header.Set("Content-Type", "application/json")
-
-	//Aggiunge sicurezza
-	req.SetBasicAuth(*userid, *password)
-
-	client := &http.Client{}
-	_, err = client.Do(req)
-	if err != nil {
-		log.Println(err.Error())
-	}
-
-	//body, err := ioutil.ReadAll(resp.Body)
-
-	//fmt.Println("Response: ", string(body))
-	return
 }
